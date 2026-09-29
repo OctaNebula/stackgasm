@@ -1,5 +1,7 @@
 # stackgASM
 
+vibecoded overnight the day before the midterms because ASM is weird
+
 **Play it: https://stackgasm.octanebula.dev**
 
 Endless trainer for the CSE1400 midterm "trace the stack" question.
