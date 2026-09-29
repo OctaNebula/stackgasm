@@ -1,7 +1,7 @@
 // Game state + actions. The UI re-renders whenever `onChange` fires.
 
 import { clone, writeMem, readMem, getReg, fromBig, unk, symBytes, regNum, bytesEq, classify } from './sim.js';
-import { generateScenario, tierForScore, TIERS } from './gen.js';
+import { generateScenario, createEndless, tierForScore, TIERS } from './gen.js';
 import { buildPaper, PAPERS } from './papers.js';
 import { compare, diagnose, diagnoseBranch, windowLo } from './feedback.js';
 import { sound } from './sound.js';
@@ -69,6 +69,10 @@ export class Game {
     clearTimeout(this._t);
     if (this.mode === 'papers') {
       this.scenario = buildPaper(this.prefs.paper);
+    } else if (this.mode === 'endless') {
+      // Endless = one main that never returns: prologue once, then the body is generated on the fly.
+      this.scenario = createEndless();
+      this.lastTier = 0;
     } else {
       const t = this.currentTier();
       this.scenario = generateScenario(t);
@@ -146,7 +150,19 @@ export class Game {
     this.check();
   }
 
+  /** Endless: keep a few steps generated ahead of the player, at the tier their score has reached. */
+  ensureSteps() {
+    const sc = this.scenario;
+    if (!sc.endless) return;
+    while (sc.steps.length - this.stepIdx <= 4) {
+      const t = tierForScore(this.score);
+      if (t > sc.tier) this.toast(`Tier ${t + 1} unlocked — ${TIERS[t].name}: ${TIERS[t].desc}`, 'tier', 4200);
+      sc.extend(t);
+    }
+  }
+
   advance() {
+    this.ensureSteps();
     if (this.stepIdx + 1 >= this.scenario.steps.length) { this.routineDone(); return; }
     this.stepIdx++;
     this.beginStep();

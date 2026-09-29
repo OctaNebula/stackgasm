@@ -83,11 +83,16 @@ class Builder {
     return R.chance(0.2) ? -R.int(1, 64) : R.pick([R.int(1, 99), R.int(1, 99), R.int(100, 300), R.pick([8, 16, 32, 64, 100, 128, 255, 256])]);
   }
   fnName() { return this.fnStack[this.fnStack.length - 1]; }
+  /** Labels and function names must be unique across the whole program (an endless run reuses bases as skip2, bump3, …). */
+  uniqueName(base) {
+    let name = base, k = 2;
+    while (this.usedLabels.has(name)) name = `${base}${k++}`;
+    this.usedLabels.add(name);
+    return name;
+  }
   label() {
     const free = LABELS.filter((l) => !this.usedLabels.has(l));
-    const l = this.R.pick(free.length ? free : LABELS);
-    this.usedLabels.add(l);
-    return l;
+    return this.uniqueName(this.R.pick(free.length ? free : LABELS));
   }
   newRet(callText) {
     this.retN++;
@@ -336,7 +341,8 @@ const OPS = [
     make: (b) => {
       if (b.inHelper || b.rsp - 40 < b.minRsp || !b.regs.includes('rax')) return null;
       const R = b.R;
-      const h = R.pick(HELPERS);
+      const free = HELPERS.filter((x) => !b.usedLabels.has(x));
+      const h = b.uniqueName(R.pick(free.length ? free : HELPERS));
       const caller = b.fnName();
       const items = [];
       const withArg = R.chance(0.6);
@@ -479,14 +485,36 @@ const OPS = [
   },
 ];
 
+const GROWS = new Set(['pushImm', 'pushReg', 'pushMem', 'subRsp', 'subRspMem', 'helper']);
+const SHRINKS = new Set(['popReg', 'addRsp']);
+
 function pickOp(b) {
   const t = b.tier;
+  // Deep stack → favour pops so a long (endless) body keeps breathing instead of pinning at the bottom.
+  const deep = b.frame() >= 8 * 7;
+  const weight = (o) => o.w[t] * (deep ? (GROWS.has(o.id) ? 0.3 : SHRINKS.has(o.id) ? 3 : 1) : 1);
   const avail = OPS.filter((o) => o.w[t] > 0);
   let total = 0;
-  for (const o of avail) total += o.w[t];
+  for (const o of avail) total += weight(o);
   let x = b.R.next() * total;
-  for (const o of avail) { x -= o.w[t]; if (x <= 0) return o; }
+  for (const o of avail) { x -= weight(o); if (x <= 0) return o; }
   return avail[avail.length - 1];
+}
+
+/** Add `count` successful body chunks (ops) to the builder. Returns how many were added. */
+function growBody(b, count) {
+  let made = 0, guard = 0;
+  while (made < count && guard++ < 300) {
+    const op = pickOp(b);
+    const items = op.make(b);
+    if (!items) continue;
+    const helperish = op.id === 'helper';
+    if (helperish) b.inHelper = true;
+    const ok = b.tryChunk(items);
+    if (helperish) b.inHelper = false;
+    if (ok) made++;
+  }
+  return made;
 }
 
 function genOnce(tier, seed) {
@@ -527,19 +555,10 @@ function genOnce(tier, seed) {
   b.emit('pushq %rbp');
   b.emit('movq %rsp, %rbp');
   const count = [R.int(3, 5), R.int(4, 6), R.int(4, 7), R.int(5, 8)][tier];
-  let made = 0, guard = 0;
+  let made = 0;
   // Frames tier+: usually start by allocating locals.
   if (tier >= 1 && R.chance(0.55)) { if (b.tryChunk([{ text: `subq $${R.pick([16, 16, 24, 32])}, %rsp` }])) made++; }
-  while (made < count && guard++ < 300) {
-    const op = pickOp(b);
-    const items = op.make(b);
-    if (!items) continue;
-    const helperish = op.id === 'helper';
-    if (helperish) b.inHelper = true;
-    const ok = b.tryChunk(items);
-    if (helperish) b.inHelper = false;
-    if (ok) made++;
-  }
+  made += growBody(b, count - made);
   if (made < Math.min(count, 3)) return null;
   if (tier >= 2 && R.chance(0.5)) b.emit('leave');
   else { b.emit('movq %rbp, %rsp'); b.emit('popq %rbp'); }
@@ -554,6 +573,49 @@ export function generateScenario(tier, seed = (Math.random() * 2 ** 32) >>> 0) {
     try {
       const sc = genOnce(tier, (seed + attempt * 7919) >>> 0);
       if (sc) return sc;
+    } catch (e) {
+      if (!(e instanceof SimError)) throw e;
+    }
+  }
+  throw new Error('generator failed');
+}
+
+// ───────────────────────────── endless: one main that never returns ─────────────────────────────
+
+function endlessOnce(seed) {
+  const R = makeRng(seed);
+  const S = R.pick([256, 320, 400, 480, 512, 640, 800, 1000, 1024]);
+  const args = ['rdi', 'rsi', 'rdx'];
+  const scratch = ['rax', 'rcx'];
+  const regs = REG_ORDER.filter((r) => args.includes(r) || scratch.includes(r) || r === 'rbp' || r === 'rsp');
+  const regVals = {};
+  for (const r of args) regVals[r] = BigInt(R.int(1, 30));
+  for (const r of scratch) regVals[r] = BigInt(R.int(0, 9));
+  const syms = baseSyms('main');
+  const m = entryMachine(S, { regs: regVals });
+  const b = new Builder({ R, tier: 0, m, syms, S, fn: 'main', regs, scratch, args });
+  b.emit('pushq %rbp');
+  b.emit('movq %rsp, %rbp');
+  const argsText = args.map((r) => `${r} = ${regVals[r]}`).join(', ');
+  const sc = { kind: 'endless', endless: true, id: `e${seed}`, title: 'main', fn: 'main', argsText, notes: [], tier: 0, regs, syms, S, hi: S + 8, steps: b.steps, init: m };
+  /** Generate more of main's body at the given tier. Main never gets an epilogue; called subroutines do. */
+  sc.extend = (tier, count = 6) => {
+    b.tier = tier;
+    sc.tier = tier;
+    const before = b.steps.length;
+    growBody(b, count);
+    if (b.steps.length === before) b.emit(`movq $${b.imm(1, 20)}, %rax`); // always make progress
+    for (let i = before; i < b.steps.length; i++) b.steps[i].lineNo = i + 1;
+  };
+  b.steps.forEach((st, i) => { st.lineNo = i + 1; });
+  sc.extend(0);
+  return sc;
+}
+
+export function createEndless(seed = (Math.random() * 2 ** 32) >>> 0) {
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {
+      return endlessOnce((seed + attempt * 7919) >>> 0);
     } catch (e) {
       if (!(e instanceof SimError)) throw e;
     }

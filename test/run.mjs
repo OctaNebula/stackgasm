@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { parse, exec, readMem, getReg, valText, classify, clone, bytesEq, fromBig, writeMem, setReg } from '../src/sim.js';
 import { buildPaper } from '../src/papers.js';
-import { generateScenario } from '../src/gen.js';
+import { generateScenario, createEndless, tierForScore } from '../src/gen.js';
 import { compare, diagnose, diagnoseBranch, windowLo, MSG } from '../src/feedback.js';
 
 let passed = 0;
@@ -184,6 +184,42 @@ test('no reliance on caller-saved registers after library calls', () => {
     }
   }
   assert.ok(calls > 100);
+});
+
+test('endless: one main, never an epilogue', () => {
+  for (let run = 0; run < 12; run++) {
+    const sc = createEndless(4242 + run * 17);
+    let score = 0;
+    while (sc.steps.length < 800) { score = sc.steps.length; sc.extend(tierForScore(score)); }
+    const main = sc.steps.filter((st) => st.fn === 'main');
+    assert.equal(main.filter((st) => st.text === 'pushq %rbp').length, 1, 'exactly one main prologue');
+    assert.equal(sc.steps[0].text, 'pushq %rbp');
+    assert.equal(sc.steps[1].text, 'movq %rsp, %rbp');
+    for (const st of main.slice(2)) {
+      assert.ok(!['ret', 'leave', 'popq %rbp', 'movq %rbp, %rsp'].includes(st.text), `main epilogue-ish step: ${st.text} (line ${st.lineNo})`);
+    }
+    assert.ok(sc.steps.every((st) => st.info.ret !== 'ret0'), 'main never returns');
+    // helpers still get full frames
+    const helperRets = sc.steps.filter((st) => st.fn !== 'main' && st.text === 'ret').length;
+    const calls = sc.steps.filter((st) => st.ins.op === 'call' && !st.meta.lib).length;
+    assert.equal(helperRets, calls);
+    // unique labels / function names
+    const labels = sc.steps.map((st) => st.label).filter(Boolean);
+    assert.equal(new Set(labels).size, labels.length, 'labels unique');
+    // window & bounds
+    let lo = Infinity, deep = 0;
+    sc.steps.forEach((st, i) => {
+      assert.equal(st.lineNo, i + 1);
+      lo = windowLo(st.before, lo);
+      const changed = [...new Set([...st.before.mem.keys(), ...st.after.mem.keys()])].filter((a) => st.before.mem.get(a) !== st.after.mem.get(a));
+      for (const a of changed) assert.ok(a >= lo && a < sc.hi + 8, `change at ${a} outside window`);
+      const rsp = Number(classify(getReg(st.after, 'rsp')).v);
+      assert.ok(rsp >= sc.S - 96 && rsp <= sc.S, `rsp ${rsp} out of bounds`);
+      if (sc.S - 8 - rsp >= 8 * 10) deep++;
+    });
+    assert.ok(deep / sc.steps.length < 0.5, `stack pinned deep ${deep}/${sc.steps.length}`);
+    assert.ok(sc.tier === 3);
+  }
 });
 
 test('branch diagnosis', () => {

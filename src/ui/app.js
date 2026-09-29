@@ -169,7 +169,7 @@ function Stage({ game }) {
   const sc = game.scenario, st = game.step;
   return html`<section class="stage">
     <div class="routine">
-      <div class="kicker">${sc.kind === 'paper' ? sc.title : html`routine <span class="dot">·</span> ${sc.kind === 'random' ? `#${game.routines + 1}` : ''}`}</div>
+      <div class="kicker">${sc.kind === 'paper' ? sc.title : sc.endless ? html`endless <span class="dot">·</span> main never returns` : html`routine <span class="dot">·</span> #${game.routines + 1}`}</div>
       <div class="sig"><span class="fn">${sc.fn}</span><span class="args">(${sc.argsText})</span></div>
       ${sc.question ? html`<div class="question">${sc.question}</div>` : null}
       ${sc.notes && sc.notes.length ? html`<div class="notes">${sc.notes.map((n) => html`<span>${n}</span>`)}</div>` : null}
