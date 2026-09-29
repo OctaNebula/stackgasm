@@ -20,7 +20,7 @@ This opens http://localhost:5173 in your browser. There are no dependencies and 
 
 - **Endless**: one never-ending `main`. The prologue runs once, main never gets an epilogue, and the body keeps going forever; subroutines it calls still get their full prologue/epilogue/`ret`. One mistake and it's game over (with an explanation of what went wrong). Difficulty ramps through 4 tiers as your score grows:
   1. Warm-up: push, pop, mov, add/sub
-  2. Frames: locals, `8(%rsp)` / `-16(%rbp)` offsets, epilogues
+  2. Frames: locals, `8(%rsp)` / `-16(%rbp)` offsets, `subq`/`addq` on `%rsp`
   3. Bytes & branches: `movb/movw/movl` into slots, `lea`, `cmp` + `jl/jg/…`, `leave`, calls with stack arguments
   4. Exam boss: `scanf`/`printf` leaving stale return addresses, dirty memory, `subq (%rsp), %rsp`, `mulq`, `movzbq`, sub-registers
 - **Practice**: complete routines (prologue → body → epilogue → `ret`), no game over. Mistakes are explained and then you continue. You can pin a tier.

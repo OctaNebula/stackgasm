@@ -5,7 +5,7 @@ import { makeStep, baseSyms, entryMachine } from './trace.js';
 
 export const TIERS = [
   { name: 'Warm-up', desc: 'push · pop · mov · add/sub', min: 0 },
-  { name: 'Frames', desc: 'locals · offsets · epilogue', min: 10 },
+  { name: 'Frames', desc: 'locals · offsets · sub/add %rsp', min: 10 },
   { name: 'Bytes & branches', desc: 'movb/movl · lea · cmp/jcc · leave · calls', min: 28 },
   { name: 'Exam boss', desc: 'scanf · stack args · dirty memory · mul', min: 55 },
 ];
