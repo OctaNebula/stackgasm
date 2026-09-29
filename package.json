@@ -1,0 +1,15 @@
+{
+  "name": "stackgasm",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Endless x86-64 stack-tracing trainer for the CSE1400 midterm",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs",
+    "start": "node server.mjs",
+    "test": "node test/run.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
